@@ -21,6 +21,7 @@
           system = "x86_64-linux";
           specialArgs = {
             inherit inputs;
+            unstable = inputs.nixpkgs-unstable.legacyPackages."x86_64-linux";
           };
           modules = [
             value
@@ -57,6 +58,7 @@
     in
     {
       packages.encrypt-email = pkgs.callPackage ./packages/encrypt-email { };
+      packages.hydra-queue-runner = pkgs.callPackage ./packages/hydra-queue-runner { };
 
       devShells.non-critical-infra = pkgs.mkShellNoCC {
         packages = [

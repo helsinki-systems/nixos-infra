@@ -1,7 +1,8 @@
-{ lib
-, pkgs
-, config
-, ...
+{
+  lib,
+  pkgs,
+  config,
+  ...
 }:
 let
   narCache = "/var/cache/hydra/nar-cache";
@@ -43,62 +44,117 @@ in
     };
   };
 
-  services.hydra-dev = {
-    enable = true;
-    package = pkgs.hydra;
-    buildMachinesFiles = [
-      (pkgs.writeText "local" ''
-        localhost ${lib.concatStringsSep "," localSystems} - 3 1 ${lib.concatStringsSep "," config.nix.settings.system-features} - -
-      '')
-    ];
-    logo = ../../../build/hydra-logo.png;
-    hydraURL = "https://hydra.nixos.org";
-    notificationSender = "edolstra@gmail.com";
-    smtpHost = "localhost";
-    useSubstitutes = true;
-    extraConfig = ''
-      max_servers 30
+  services = {
+    hydra-dev = {
+      enable = true;
+      package = pkgs.hydra;
+      buildMachinesFiles = [
+        (pkgs.writeText "local" ''
+          localhost ${lib.concatStringsSep "," localSystems} - 3 1 ${lib.concatStringsSep "," config.nix.settings.system-features} - -
+        '')
+      ];
+      logo = ../../../build/hydra-logo.png;
+      hydraURL = "https://hydra.nixos.org";
+      notificationSender = "edolstra@gmail.com";
+      smtpHost = "localhost";
+      useSubstitutes = true;
+      extraConfig = ''
+        max_servers 30
 
-      store_uri = s3://nix-cache-staging?secret-key=${config.sops.secrets.signing-key.path}&ls-compression=br&log-compression=br
-      server_store_uri = https://cache-staging.nixos.org?local-nar-cache=${narCache}
-      binary_cache_public_uri = https://cache-staging.nixos.org
+        store_uri = s3://nix-cache-staging?secret-key=${config.sops.secrets.signing-key.path}&ls-compression=br&log-compression=br
+        server_store_uri = https://cache-staging.nixos.org?local-nar-cache=${narCache}
+        binary_cache_public_uri = https://cache-staging.nixos.org
 
-      <Plugin::Session>
-        cache_size = 32m
-      </Plugin::Session>
+        <Plugin::Session>
+          cache_size = 32m
+        </Plugin::Session>
 
-      # patchelf:master:3
-      xxx-jobset-repeats = nixos:reproducibility:1
+        # patchelf:master:3
+        xxx-jobset-repeats = nixos:reproducibility:1
 
-      upload_logs_to_binary_cache = true
-      compress_build_logs = false  # conflicts with upload_logs_to_binary_cache
+        upload_logs_to_binary_cache = true
+        compress_build_logs = false  # conflicts with upload_logs_to_binary_cache
 
-      log_prefix = https://cache.nixos.org/
+        log_prefix = https://cache.nixos.org/
 
-      evaluator_workers = 1
-      evaluator_max_memory_size = 4096
+        evaluator_workers = 1
+        evaluator_max_memory_size = 4096
 
-      max_concurrent_evals = 1
+        max_concurrent_evals = 1
 
-      # increase the number of active compress slots (CPU is 48*2 on mimas)
-      max_local_worker_threads = 144
+        # increase the number of active compress slots (CPU is 48*2 on mimas)
+        max_local_worker_threads = 144
 
-      max_unsupported_time = 86400
+        max_unsupported_time = 86400
 
-      allow_import_from_derivation = false
+        allow_import_from_derivation = false
 
-      max_output_size = 3821225472 # 3 << 30 + 600000000 = 3 GiB + 0.6 GB
-      max_db_connections = 350
+        max_output_size = 3821225472 # 3 << 30 + 600000000 = 3 GiB + 0.6 GB
+        max_db_connections = 350
 
-      queue_runner_metrics_address = [::]:9198
+        queue_runner_metrics_address = [::]:9198
 
-      <hydra_notify>
-        <prometheus>
-          listen_address = 0.0.0.0
-          port = 9199
-        </prometheus>
-      </hydra_notify>
-    '';
+        <hydra_notify>
+          <prometheus>
+            listen_address = 0.0.0.0
+            port = 9199
+          </prometheus>
+        </hydra_notify>
+      '';
+    };
+
+    hydra-queue-runner-v2 = {
+      enable = true;
+    };
+
+    hydra-queue-builder-v2 = {
+      enable = true;
+      queueRunnerAddr = "https://hydra-queue-runner-staging.nixos.org";
+      # TODO
+      # mtls = {
+      #   serverRootCaCertPath = "${../../1systems/helsinki-hydra-builder01/ca.crt}";
+      #   clientCertPath = "${../../1systems/${config.networking.hostName}/client.crt}";
+      #   clientKeyPath = "/run/secrets/hydra/builder/client.key";
+      #   domainName = "hydra-queue-runner-staging.nixos.org";
+      # };
+    };
+
+    nginx = {
+      enable = true;
+      virtualHosts."hydra-queue-runner-staging.nixos.org" = {
+        default = true;
+        # TODO
+        # extraConfig = ''
+        #   ssl_client_certificate ${./ca.crt};
+        #   ssl_verify_depth 2;
+        #   ssl_verify_client on;
+        # '';
+
+        # sslCertificate = ./server.crt;
+        # sslCertificateKey = "/run/secrets/hydra/runner/server.key";
+        # onlySSL = true;
+
+        locations."/".extraConfig = ''
+          # This is necessary so that grpc connections do not get closed early
+          # see https://stackoverflow.com/a/67805465
+          client_body_timeout 31536000s;
+
+          grpc_pass grpc://[::1]:50051;
+
+          grpc_read_timeout 31536000s; # 1 year in seconds
+          grpc_send_timeout 31536000s; # 1 year in seconds
+          grpc_socket_keepalive on;
+
+          grpc_set_header Host $host;
+          grpc_set_header X-Real-IP $remote_addr;
+          grpc_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          grpc_set_header X-Forwarded-Proto $scheme;
+
+          grpc_set_header X-Client-DN $ssl_client_s_dn;
+          grpc_set_header X-Client-Cert $ssl_client_escaped_cert;
+        '';
+      };
+    };
   };
 
   sops.secrets.hydra-users = {
@@ -116,6 +172,8 @@ in
     services = {
       hydra-notify.enable = false;
       hydra-queue-runner = {
+        enable = false;
+
         # restarting the scheduler is very expensive
         restartIfChanged = false;
         serviceConfig = {
