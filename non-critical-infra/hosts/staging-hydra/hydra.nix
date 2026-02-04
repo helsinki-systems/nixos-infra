@@ -19,7 +19,7 @@ in
   ];
 
   networking.firewall.allowedTCPPorts = [
-    9198 # queue-runnner metrics
+    8080 # queue-runnner metrics
     9199 # hydra-notify metrics
   ];
 
@@ -126,9 +126,13 @@ in
 
     queue-runner-dev = {
       enable = true;
+      rest = {
+        address = "[::0]";
+        port = 8080;
+      };
       settings = {
         queueTriggerTimerInS = 300;
-        concurrentUploadLimit = 2;
+        concurrentUploadLimit = 5;
         remoteStoreAddr = [
           "s3://nix-cache-staging?secret-key=${config.sops.secrets.signing-key.path}&ls-compression=br&log-compression=br"
         ];
